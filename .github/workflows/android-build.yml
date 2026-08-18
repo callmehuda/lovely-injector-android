@@ -1,0 +1,145 @@
+name: Android Build
+
+# Builds `liblovely.so` for both Android ABIs (arm64-v8a and armeabi-v7a),
+# packages each into a zip, and uploads them as a workflow artifact.
+#
+# Triggers:
+# - Every push to any branch.
+# - Manual dispatch via the GitHub Actions UI ("Run workflow" button).
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  ANDROID_NDK_VERSION: r26d
+  ANDROID_API: '24'
+
+jobs:
+  build-android:
+    name: Build liblovely.so (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-linux-android
+            abi: arm64-v8a
+            clang_triple: aarch64-linux-android
+          - target: armv7-linux-androideabi
+            abi: armeabi-v7a
+            clang_triple: armv7a-linux-androideabi
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          components: rust-src
+          targets: ${{ matrix.target }}
+
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        id: setup_ndk
+        with:
+          ndk-version: ${{ env.ANDROID_NDK_VERSION }}
+          add-to-path: false
+
+      - name: Configure cargo + cc-rs for Android cross-compilation
+        env:
+          NDK: ${{ steps.setup_ndk.outputs.ndk-path }}
+          TARGET: ${{ matrix.target }}
+          CLANG_TRIPLE: ${{ matrix.clang_triple }}
+          API: ${{ env.ANDROID_API }}
+        run: |
+          TOOLCHAIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          CC_BIN="$TOOLCHAIN/${CLANG_TRIPLE}${API}-clang"
+          CXX_BIN="$TOOLCHAIN/${CLANG_TRIPLE}${API}-clang++"
+          AR_BIN="$TOOLCHAIN/llvm-ar"
+          RANLIB_BIN="$TOOLCHAIN/llvm-ranlib"
+          for bin in "$CC_BIN" "$CXX_BIN" "$AR_BIN" "$RANLIB_BIN"; do
+            if [ ! -x "$bin" ]; then
+              echo "::error::Expected NDK binary not found or not executable: $bin"
+              exit 1
+            fi
+          done
+          TARGET_US="${TARGET//-/_}"
+          {
+            echo "CC_${TARGET_US}=${CC_BIN}"
+            echo "CXX_${TARGET_US}=${CXX_BIN}"
+            echo "AR_${TARGET_US}=${AR_BIN}"
+            echo "RANLIB_${TARGET_US}=${RANLIB_BIN}"
+            echo "CARGO_TARGET_${TARGET_US^^}_LINKER=${CC_BIN}"
+            echo "ANDROID_NDK_HOME=${NDK}"
+            echo "ANDROID_NDK_ROOT=${NDK}"
+          } >> "$GITHUB_ENV"
+          echo "Configured cross toolchain for $TARGET:"
+          echo "  CC  = $CC_BIN"
+          echo "  CXX = $CXX_BIN"
+          echo "  AR  = $AR_BIN"
+          echo "  RANLIB = $RANLIB_BIN"
+
+      - name: Install cmake (for dobby-sys)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build
+
+      - name: Cargo cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock', 'crates/dobby-sys/build.rs') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ matrix.target }}-
+
+      - name: Build liblovely.so
+        # `--lib` builds just the cdylib, skipping benches/tests/docs for speed.
+        # `RUSTFLAGS="-C strip=symbols -C opt-level=z"` keeps the binary lean
+        # (the symbol table isn't useful in a release build of an injected .so
+        # anyway, and `opt-level=z` produces the smallest possible binary).
+        env:
+          RUSTFLAGS: "-C strip=symbols -C opt-level=z"
+        run: |
+          cargo build --release --lib \
+            --target ${{ matrix.target }} \
+            -p lovely-android
+
+      - name: Stage artifact
+        run: |
+          mkdir -p staging/liblovely/${{ matrix.abi }}
+          cp target/${{ matrix.target }}/release/liblovely.so \
+             staging/liblovely/${{ matrix.abi }}/liblovely.so
+          cp README.md staging/liblovely/ 2>/dev/null || true
+          cd staging
+          zip -r "../liblovely-${{ matrix.abi }}.zip" liblovely
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: liblovely-${{ matrix.abi }}
+          path: staging/liblovely/
+          retention-days: 30
+          if-no-files-found: error
+          compression-level: 6
+
+  merge-artifacts:
+    name: Merge per-ABI artifacts
+    needs: build-android
+    runs-on: ubuntu-latest
+    steps:
+      - name: Merge into single artifact
+        uses: actions/upload-artifact/merge@v4
+        with:
+          name: liblovely-android-all-abis
+          pattern: liblovely-*
+          retention-days: 30
+          delete-merged: true

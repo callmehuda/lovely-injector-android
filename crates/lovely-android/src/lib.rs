@@ -61,7 +61,7 @@ unsafe extern "C" fn JNI_OnLoad(_jvm: JavaVM, _: *mut c_void) -> jint {
         error!("{message}");
     }));
 
-    std::env::set_var("LOVELY_MOD_DIR", "/storage/emulated/0/Documents/Balatro/game/save/Mods");
+    std::env::set_var("LOVELY_MOD_DIR", "/sdcard/Documents/Balatro/Mods");
 
     let rt = Lovely::init(&|a, b, c, d, e| RECALL(a, b, c, d, e), lualib::get_lualib(), false);
     RUNTIME

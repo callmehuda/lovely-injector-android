@@ -11,7 +11,6 @@ libloading = "0.8.3"
 toml = "0.8.10"
 serde = { version = "1.0.197", features = ["derive"] }
 serde_json = "1.0"
-sha2 = "0.10.8"
 walkdir = "2.5.0"
 wildmatch = "2.3.0"
 log = "0.4.21"
@@ -22,12 +21,12 @@ serde_ignored = "0.1.10"
 itertools = "0.13.0"
 crop = "0.4.2"
 anyhow = "1.0.100"
-zip = "6.0.0"
+# `zip` defaults to enabling every codec (zstd, bzip2, lzma, …), each of
+# which drags in a `-sys` crate that compiles C/C++ from source. That's
+# painful for cross-compilation to Android (zstd-sys in particular fails
+# to find `arm-linux-androideabi-ar`). We only need basic DEFLATE
+# read/write, so disable the default features and re-enable just `deflate`.
+zip = { version = "6.0.0", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
-criterion = { version = "0.7", default-features = false }
 tempfile = "3"
-
-[[bench]]
-name = "patches"
-harness = false

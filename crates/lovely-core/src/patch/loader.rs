@@ -499,11 +499,15 @@ sources = ["inject.lua"]
     }
 
     #[test]
-    fn zip_no_mod_root_errors() {
+    fn zip_no_mod_root_returns_empty() {
+        // A zip without `lovely.toml` or a `lovely/` directory is treated as
+        // a patchless mod (Ok with empty patch list), not an error. This lets
+        // a single zip coexist with other loaders without crashing lovely.
         let temp = TempDir::new().unwrap();
         let zip = make_zip(&temp, "empty.zip", &[("random.txt", "")]);
 
-        assert!(get_zip_patches(&zip).is_err());
+        let result = get_zip_patches(&zip).unwrap();
+        assert!(result.1.is_empty());
     }
 
     #[test]
